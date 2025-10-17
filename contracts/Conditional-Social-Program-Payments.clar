@@ -200,3 +200,78 @@
     (ok true)
   )
 )
+
+
+(define-map verifiers
+  { verifier: principal }
+  {
+    authorized: bool,
+    school: (string-ascii 100),
+    verifications-count: uint,
+    authorized-at: uint
+  }
+)
+
+(define-read-only (get-verifier (verifier principal))
+  (map-get? verifiers { verifier: verifier })
+)
+
+(define-read-only (is-authorized-verifier (verifier principal))
+  (match (get-verifier verifier)
+    verifier-data (get authorized verifier-data)
+    false
+  )
+)
+
+(define-public (authorize-verifier (verifier principal) (school (string-ascii 100)))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (not (is-authorized-verifier verifier)) ERR_ALREADY_EXISTS)
+    (map-set verifiers
+      { verifier: verifier }
+      {
+        authorized: true,
+        school: school,
+        verifications-count: u0,
+        authorized-at: stacks-block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (revoke-verifier (verifier principal))
+  (let ((verifier-data (unwrap! (get-verifier verifier) ERR_NOT_FOUND)))
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (map-set verifiers
+      { verifier: verifier }
+      (merge verifier-data { authorized: false })
+    )
+    (ok true)
+  )
+)
+
+(define-public (record-attendance-by-verifier (child-id uint) (month uint) (year uint) (days-attended uint) (total-days uint))
+  (let (
+    (child-data (unwrap! (get-child child-id) ERR_NOT_FOUND))
+    (verifier-data (unwrap! (get-verifier tx-sender) ERR_UNAUTHORIZED))
+  )
+    (asserts! (get authorized verifier-data) ERR_UNAUTHORIZED)
+    (asserts! (<= days-attended total-days) ERR_INVALID_ATTENDANCE)
+    (asserts! (is-eq (get school child-data) (get school verifier-data)) ERR_UNAUTHORIZED)
+    (map-set attendance-records
+      { child-id: child-id, month: month, year: year }
+      {
+        days-attended: days-attended,
+        total-days: total-days,
+        verified: true,
+        verifier: tx-sender
+      }
+    )
+    (map-set verifiers
+      { verifier: tx-sender }
+      (merge verifier-data { verifications-count: (+ (get verifications-count verifier-data) u1) })
+    )
+    (ok true)
+  )
+)
