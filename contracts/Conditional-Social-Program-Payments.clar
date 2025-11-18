@@ -6,6 +6,10 @@
 (define-constant ERR_PAYMENT_FAILED (err u500))
 (define-constant ERR_INSUFFICIENT_FUNDS (err u402))
 
+(define-data-var bonus-enabled bool true)
+(define-data-var perfect-attendance-bonus uint u500000)
+(define-data-var next-bonus-id uint u1)
+
 (define-data-var program-active bool true)
 (define-data-var monthly-allowance uint u1000000)
 (define-data-var min-attendance-rate uint u80)
@@ -272,6 +276,73 @@
       { verifier: tx-sender }
       (merge verifier-data { verifications-count: (+ (get verifications-count verifier-data) u1) })
     )
+    (ok true)
+  )
+)
+
+(define-map bonus-payments
+  { family-id: uint, bonus-id: uint }
+  {
+    child-id: uint,
+    amount: uint,
+    month: uint,
+    year: uint,
+    stacks-block-height: uint
+  }
+)
+
+(define-read-only (get-bonus-payment (family-id uint) (bonus-id uint))
+  (map-get? bonus-payments { family-id: family-id, bonus-id: bonus-id })
+)
+
+(define-read-only (check-perfect-attendance (child-id uint) (month uint) (year uint))
+  (match (get-attendance child-id month year)
+    attendance-data 
+      (ok (is-eq (get days-attended attendance-data) (get total-days attendance-data)))
+    (err ERR_NOT_FOUND)
+  )
+)
+
+(define-read-only (get-bonus-settings)
+  {
+    enabled: (var-get bonus-enabled),
+    bonus-amount: (var-get perfect-attendance-bonus)
+  }
+)
+
+(define-public (claim-perfect-attendance-bonus (child-id uint) (month uint) (year uint))
+  (let (
+    (child-data (unwrap! (get-child child-id) ERR_NOT_FOUND))
+    (family-data (unwrap! (get-family (get family-id child-data)) ERR_NOT_FOUND))
+    (attendance-data (unwrap! (get-attendance child-id month year) ERR_NOT_FOUND))
+    (bonus-amount (var-get perfect-attendance-bonus))
+    (bonus-id (var-get next-bonus-id))
+  )
+    (asserts! (var-get bonus-enabled) ERR_UNAUTHORIZED)
+    (asserts! (get active family-data) ERR_UNAUTHORIZED)
+    (asserts! (get verified attendance-data) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get days-attended attendance-data) (get total-days attendance-data)) ERR_INVALID_ATTENDANCE)
+    (try! (stx-transfer? bonus-amount tx-sender (get head family-data)))
+    (map-set bonus-payments
+      { family-id: (get family-id child-data), bonus-id: bonus-id }
+      {
+        child-id: child-id,
+        amount: bonus-amount,
+        month: month,
+        year: year,
+        stacks-block-height: stacks-block-height
+      }
+    )
+    (var-set next-bonus-id (+ bonus-id u1))
+    (ok bonus-amount)
+  )
+)
+
+(define-public (update-bonus-settings (enabled bool) (bonus-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (var-set bonus-enabled enabled)
+    (var-set perfect-attendance-bonus bonus-amount)
     (ok true)
   )
 )
